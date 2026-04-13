@@ -33,6 +33,7 @@ const PLAYER_CAMERA_ID = "player-camera";
 const YAW_RIG_COMPONENT = "yaw-rig-from-look-controls";
 const GROUND_ALIGN_COMPONENT = "ground-align-once";
 const PLAYER_EQUIPMENTS_COMPONENT = "player-equipments";
+const CHAT_BUBBLE_COMPONENT = "naf-chat-bubble";
 
 const DOSIMETER_SITES = [
   {
@@ -166,6 +167,60 @@ const CArmScene = () => {
     };
   }, []);
 
+  // Listen to UI -> scene chat events (SYNCED via NAF component)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handler = (evt: any) => {
+      const text: string | undefined = evt?.detail?.text;
+      const durationMs: number = evt?.detail?.durationMs ?? 5000;
+      const senderId: string | undefined = evt?.detail?.senderId;
+      const nonce: string = String(evt?.detail?.nonce || Date.now());
+      if (!text) return;
+
+      const applyBubble = () => {
+        let targetEl = playerRigRef.current as any;
+
+        if (senderId && typeof document !== "undefined") {
+          const avatars = document.querySelectorAll(".avatar");
+          for (let i = 0; i < avatars.length; i++) {
+            const el = avatars[i] as any;
+            const parent = el.parentEl || el.parentElement;
+            const owner =
+              el.components?.networked?.data?.owner ??
+              parent?.components?.networked?.data?.owner;
+            if (owner === senderId) {
+              targetEl = el;
+              break;
+            }
+          }
+        }
+
+        if (!targetEl?.setAttribute) return false;
+        targetEl.setAttribute(CHAT_BUBBLE_COMPONENT, {
+          text,
+          hideAt: Date.now() + durationMs,
+          nonce,
+        });
+        return true;
+      };
+
+      if (applyBubble()) return;
+
+      let tries = 0;
+      const retry = window.setInterval(() => {
+        if (applyBubble() || ++tries > 20) {
+          window.clearInterval(retry);
+        }
+      }, 100);
+    };
+
+    window.addEventListener("naf-chat-bubble", handler as any);
+    return () => {
+      window.removeEventListener("naf-chat-bubble", handler as any);
+    };
+  }, []);
+
   // ==================================================
   // Dosimeter simulation (no precomputed field yet)
   // Uses patient group center as radiation source and inverse-square falloff.
@@ -261,6 +316,26 @@ const CArmScene = () => {
           },
           init: function () {
             this._yaw = this.el?.object3D?.rotation?.y || 0;
+            this._lastAppliedYaw = this._yaw;
+            this._hasAppliedYaw = false;
+          },
+          _applyYaw: function (yaw: number, force?: boolean) {
+            const delta = yaw - this._lastAppliedYaw;
+            if (!force && this._hasAppliedYaw && Math.abs(delta) < 0.000001) return;
+
+            this._yaw = yaw;
+            this._lastAppliedYaw = yaw;
+            this._hasAppliedYaw = true;
+
+            if (this.el?.object3D?.rotation) {
+              this.el.object3D.rotation.set(0, yaw, 0);
+            }
+
+            this.el.setAttribute("rotation", {
+              x: 0,
+              y: (yaw * 180) / Math.PI,
+              z: 0,
+            });
           },
           tick: function () {
             const camEl = this.data && this.data.camera;
@@ -272,26 +347,21 @@ const CArmScene = () => {
             if (!yawObj) {
               // Fallback: just clamp to yaw from camera rotation
               const y = camEl.object3D?.rotation?.y || 0;
-              const rot = this.el.getAttribute("rotation") || { x: 0, y: 0, z: 0 };
-              rot.x = 0;
-              rot.y = (y * 180) / Math.PI;
-              rot.z = 0;
-              this.el.setAttribute("rotation", rot);
+              this._applyYaw(y);
               return;
             }
 
             // Transfer delta yaw from camera to rig, then zero out camera yaw
             const deltaYaw = yawObj.rotation.y || 0;
-            if (deltaYaw !== 0) {
-              this._yaw += deltaYaw;
+            if (Math.abs(deltaYaw) > 0.000001) {
               yawObj.rotation.y = 0;
+              this._applyYaw(this._yaw + deltaYaw);
+              return;
             }
 
-            const rot = this.el.getAttribute("rotation") || { x: 0, y: 0, z: 0 };
-            rot.x = 0;
-            rot.y = (this._yaw * 180) / Math.PI;
-            rot.z = 0;
-            this.el.setAttribute("rotation", rot);
+            if (!this._hasAppliedYaw) {
+              this._applyYaw(this._yaw, true);
+            }
           },
         });
       }
@@ -392,6 +462,214 @@ const CArmScene = () => {
       }
     }
 
+    // Register a synced chat bubble component. Text is rendered to a canvas texture
+    // so CJK glyphs can use browser/system fonts instead of A-Frame's limited SDF font.
+    if (typeof window !== "undefined") {
+      const w = window as any;
+      const AFRAME = w.AFRAME;
+      if (AFRAME?.registerComponent && !AFRAME.components?.[CHAT_BUBBLE_COMPONENT]) {
+        const THREE = AFRAME.THREE;
+        AFRAME.registerComponent(CHAT_BUBBLE_COMPONENT, {
+          schema: {
+            text: { type: "string", default: "" },
+            hideAt: { type: "number", default: 0 },
+            nonce: { type: "string", default: "" },
+          },
+          init: function () {
+            this._bubble = null;
+            this._plane = null;
+            this._canvas = document.createElement("canvas");
+            this._ctx = this._canvas.getContext("2d");
+            this._texture = null;
+            this._material = null;
+            this._lastText = "";
+            this._lastRenderKey = "";
+            this._dirty = true;
+          },
+          update: function () {
+            this._dirty = true;
+          },
+          _ensureParts: function () {
+            if (this._bubble && document.body.contains(this._bubble)) return true;
+            this._bubble = this.el.querySelector(".chat-bubble");
+            if (!this._bubble) return false;
+            this._plane = this._bubble.querySelector(".chat-bubble-plane");
+            this._dirty = true;
+            return true;
+          },
+          _formatText: function (raw: string) {
+            const trimmed = String(raw || "").replace(/\s+/g, " ").trim();
+            return trimmed.length > 160 ? `${trimmed.slice(0, 157)}...` : trimmed;
+          },
+          _wrapText: function (ctx: CanvasRenderingContext2D, text: string, maxWidth: number) {
+            const lines: string[] = [];
+            let line = "";
+
+            const pushLine = () => {
+              if (line) lines.push(line);
+              line = "";
+            };
+
+            for (let i = 0; i < text.length; i++) {
+              const char = text[i];
+              if (char === "\n") {
+                pushLine();
+                continue;
+              }
+
+              const next = line + char;
+              if (ctx.measureText(next).width <= maxWidth || !line) {
+                line = next;
+              } else {
+                pushLine();
+                line = char;
+              }
+            }
+            pushLine();
+            return lines.slice(0, 4);
+          },
+          _drawRoundedRect: function (
+            ctx: CanvasRenderingContext2D,
+            x: number,
+            y: number,
+            width: number,
+            height: number,
+            radius: number
+          ) {
+            const r = Math.min(radius, width / 2, height / 2);
+            ctx.beginPath();
+            ctx.moveTo(x + r, y);
+            ctx.lineTo(x + width - r, y);
+            ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+            ctx.lineTo(x + width, y + height - r);
+            ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+            ctx.lineTo(x + r, y + height);
+            ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+            ctx.lineTo(x, y + r);
+            ctx.quadraticCurveTo(x, y, x + r, y);
+            ctx.closePath();
+          },
+          _renderBubbleTexture: function (text: string) {
+            if (!this._ctx || !this._plane) return false;
+
+            const ctx = this._ctx as CanvasRenderingContext2D;
+            const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+            const fontSize = 36;
+            const lineHeight = 48;
+            const paddingX = 34;
+            const paddingY = 26;
+            const tailHeight = 26;
+            const maxTextWidth = 560;
+            const fontFamily =
+              '"Noto Sans CJK JP", "Noto Sans CJK SC", "Yu Gothic", "Meiryo", "Microsoft YaHei", "PingFang SC", "Hiragino Sans", sans-serif';
+
+            ctx.font = `700 ${fontSize}px ${fontFamily}`;
+            const lines = this._wrapText(ctx, text, maxTextWidth);
+            const measuredWidth = Math.max(
+              80,
+              ...lines.map((line: string) => ctx.measureText(line).width)
+            );
+
+            const logicalWidth = Math.ceil(Math.min(maxTextWidth, measuredWidth) + paddingX * 2);
+            const logicalHeight = Math.ceil(lines.length * lineHeight + paddingY * 2 + tailHeight);
+            const rectHeight = logicalHeight - tailHeight;
+
+            this._canvas.width = Math.ceil(logicalWidth * dpr);
+            this._canvas.height = Math.ceil(logicalHeight * dpr);
+            this._canvas.style.width = `${logicalWidth}px`;
+            this._canvas.style.height = `${logicalHeight}px`;
+
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, logicalWidth, logicalHeight);
+            ctx.font = `700 ${fontSize}px ${fontFamily}`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+
+            ctx.shadowColor = "rgba(0, 0, 0, 0.22)";
+            ctx.shadowBlur = 12;
+            ctx.shadowOffsetY = 5;
+            ctx.fillStyle = "rgba(255, 255, 255, 0.96)";
+            this._drawRoundedRect(ctx, 4, 4, logicalWidth - 8, rectHeight - 8, 30);
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.moveTo(logicalWidth / 2 - 18, rectHeight - 7);
+            ctx.lineTo(logicalWidth / 2, logicalHeight - 4);
+            ctx.lineTo(logicalWidth / 2 + 18, rectHeight - 7);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.shadowColor = "transparent";
+            ctx.strokeStyle = "rgba(0, 0, 0, 0.16)";
+            ctx.lineWidth = 2;
+            this._drawRoundedRect(ctx, 4, 4, logicalWidth - 8, rectHeight - 8, 30);
+            ctx.stroke();
+
+            ctx.fillStyle = "#111111";
+            lines.forEach((line: string, index: number) => {
+              const y =
+                paddingY +
+                lineHeight / 2 +
+                index * lineHeight +
+                Math.max(0, (rectHeight - paddingY * 2 - lines.length * lineHeight) / 2);
+              ctx.fillText(line, logicalWidth / 2, y);
+            });
+
+            if (this._texture) this._texture.dispose();
+            this._texture = new THREE.CanvasTexture(this._canvas);
+            this._texture.minFilter = THREE.LinearFilter;
+            this._texture.magFilter = THREE.LinearFilter;
+            this._texture.needsUpdate = true;
+
+            const mesh = this._plane.getObject3D("mesh");
+            if (mesh) {
+              if (!this._material) {
+                this._material = new THREE.MeshBasicMaterial({
+                  map: this._texture,
+                  transparent: true,
+                  depthWrite: false,
+                });
+              }
+              this._material.map = this._texture;
+              this._material.needsUpdate = true;
+              mesh.material = this._material;
+            }
+
+            const worldWidth = Math.min(2.2, Math.max(0.8, logicalWidth / 340));
+            const worldHeight = worldWidth * (logicalHeight / logicalWidth);
+            this._plane.setAttribute("width", worldWidth);
+            this._plane.setAttribute("height", worldHeight);
+            return !!mesh;
+          },
+          tick: function () {
+            if (!this._ensureParts()) return;
+
+            const text = this._formatText(this.data.text);
+            const show = !!text && Date.now() < (this.data.hideAt || 0);
+            this._bubble.setAttribute("visible", show);
+            if (!show) return;
+
+            const renderKey = `${this.data.nonce || ""}|${text}`;
+            if (this._dirty || renderKey !== this._lastRenderKey || !this._material) {
+              this._lastText = text;
+              if (this._renderBubbleTexture(text)) {
+                this._lastRenderKey = renderKey;
+                this._dirty = false;
+              }
+            }
+
+            const sceneEl = this.el.sceneEl;
+            const camObj: any = sceneEl?.camera;
+            if (!camObj || !this._bubble.object3D) return;
+
+            const camPos = new THREE.Vector3();
+            camObj.getWorldPosition(camPos);
+            this._bubble.object3D.lookAt(camPos);
+          },
+        });
+      }
+    }
+
     // Register an A-Frame component that aligns an entity's bounding box to ground (y=0) once.
     if (typeof window !== "undefined") {
       const w = window as any;
@@ -444,7 +722,12 @@ const CArmScene = () => {
         if (!w[schemaFlag]) {
           NAF.schemas.add({
             template: `#${AVATAR_TEMPLATE_ID}`,
-            components: ["position", "rotation", "naf-emote", PLAYER_EQUIPMENTS_COMPONENT],
+            components: [
+              "position",
+              "rotation",
+              "naf-emote",
+              PLAYER_EQUIPMENTS_COMPONENT,
+            ],
           });
           w[schemaFlag] = true;
         }
@@ -867,6 +1150,18 @@ const CArmScene = () => {
                 visible="false"
                 material="shader: flat; transparent: true; alphaTest: 0.01"
               ></a-image>
+              <a-entity
+                class="chat-bubble"
+                position="0 ${cameraEyeHeight + 0.95} 0"
+                visible="false"
+              >
+                <a-plane
+                  class="chat-bubble-plane"
+                  width="1.1"
+                  height="0.45"
+                  material="shader: flat; transparent: true; opacity: 1"
+                ></a-plane>
+              </a-entity>
               <!-- Render the same GLB as SelfMadePlayer (three.js scene) -->
               <!-- Player root is at eye-level (y=1.6), so offset model down to ground -->
               <a-entity
@@ -969,6 +1264,7 @@ const CArmScene = () => {
                 rotation="0 0 0"
                 wasd-controls="fly: false; acceleration: 4"
                 naf-emote="src: #emote-check; hideAt: 0"
+                naf-chat-bubble="text: ; hideAt: 0"
                 visible={objectVisibles.player}
             >
                  {/* Camera handles view pitch (and temporary yaw, transferred to rig) */}

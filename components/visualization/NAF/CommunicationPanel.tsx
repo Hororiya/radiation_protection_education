@@ -150,14 +150,26 @@ export function CommunicationPanel({ compact = false }: CommunicationPanelProps)
         const handler = (senderId: string, _dataType: string, data: any) => {
             const text = normalizeText(data?.text);
             if (!senderId || !text || senderId === network.clientId) return;
+            const id = typeof data?.id === "string" ? data.id : makeMessageId();
 
             addMessage({
-                id: typeof data?.id === "string" ? data.id : makeMessageId(),
+                id,
                 senderId,
                 text,
                 sentAt: Number(data?.sentAt) || Date.now(),
                 self: false,
             });
+
+            window.dispatchEvent(
+                new CustomEvent("naf-chat-bubble", {
+                    detail: {
+                        text,
+                        senderId,
+                        nonce: id,
+                        durationMs: 5000,
+                    },
+                })
+            );
         };
 
         const trySubscribe = () => {
@@ -571,6 +583,16 @@ export function CommunicationPanel({ compact = false }: CommunicationPanelProps)
             self: true,
         });
 
+        window.dispatchEvent(
+            new CustomEvent("naf-chat-bubble", {
+                detail: {
+                    text,
+                    nonce: payload.id,
+                    durationMs: 5000,
+                },
+            })
+        );
+
         const NAF = (window as any).NAF;
         try {
             NAF?.connection?.broadcastDataGuaranteed?.(CHAT_DATA_TYPE, payload);
@@ -795,4 +817,3 @@ export function CommunicationPanel({ compact = false }: CommunicationPanelProps)
         </section>
     );
 }
-
