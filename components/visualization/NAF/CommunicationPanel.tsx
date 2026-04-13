@@ -3,6 +3,7 @@ import React from "react";
 const ROOM_FALLBACK = "default";
 const CHAT_DATA_TYPE = "naf-chat-message";
 const MAX_MESSAGES = 60;
+const DISPLAY_NAME_STORAGE_KEY = "naf-display-name";
 
 const RTC_CONFIG: RTCConfiguration = {
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -32,6 +33,7 @@ type NetworkState = {
 type ChatMessage = {
     id: string;
     senderId: string;
+    senderName: string;
     text: string;
     sentAt: number;
     self: boolean;
@@ -61,6 +63,11 @@ function normalizeText(value: unknown) {
     return value.replace(/\s+/g, " ").trim().slice(0, 240);
 }
 
+function normalizeName(value: unknown) {
+    if (typeof value !== "string") return "";
+    return value.replace(/\s+/g, " ").trim().slice(0, 24);
+}
+
 function shouldInitiateOffer(localId: string, remoteId: string) {
     return localId.localeCompare(remoteId) < 0;
 }
@@ -75,6 +82,9 @@ export function CommunicationPanel({ compact = false }: CommunicationPanelProps)
     const [network, setNetwork] = React.useState<NetworkState | null>(null);
     const [messages, setMessages] = React.useState<ChatMessage[]>([]);
     const [draft, setDraft] = React.useState("");
+    const [displayName, setDisplayName] = React.useState("");
+    const [nameDraft, setNameDraft] = React.useState("");
+    const [isEditingName, setIsEditingName] = React.useState(false);
     const [voiceEnabled, setVoiceEnabled] = React.useState(false);
     const [voiceStatus, setVoiceStatus] = React.useState<VoiceStatus>("idle");
     const [voiceError, setVoiceError] = React.useState<string | null>(null);
@@ -91,6 +101,17 @@ export function CommunicationPanel({ compact = false }: CommunicationPanelProps)
     React.useEffect(() => {
         networkRef.current = network;
     }, [network]);
+
+    React.useEffect(() => {
+        if (typeof window === "undefined") return;
+        const savedName = normalizeName(window.localStorage.getItem(DISPLAY_NAME_STORAGE_KEY));
+        if (!savedName) {
+            setIsEditingName(true);
+            return;
+        }
+        setDisplayName(savedName);
+        setNameDraft(savedName);
+    }, []);
 
     const refreshPeerCount = React.useCallback(() => {
         setVoicePeerCount(Object.keys(peersRef.current).length);
@@ -151,10 +172,12 @@ export function CommunicationPanel({ compact = false }: CommunicationPanelProps)
             const text = normalizeText(data?.text);
             if (!senderId || !text || senderId === network.clientId) return;
             const id = typeof data?.id === "string" ? data.id : makeMessageId();
+            const senderName = normalizeName(data?.name) || `User ${shortId(senderId)}`;
 
             addMessage({
                 id,
                 senderId,
+                senderName,
                 text,
                 sentAt: Number(data?.sentAt) || Date.now(),
                 self: false,
@@ -164,6 +187,7 @@ export function CommunicationPanel({ compact = false }: CommunicationPanelProps)
                 new CustomEvent("naf-chat-bubble", {
                     detail: {
                         text,
+                        senderName,
                         senderId,
                         nonce: id,
                         durationMs: 5000,
@@ -569,10 +593,15 @@ export function CommunicationPanel({ compact = false }: CommunicationPanelProps)
         event.preventDefault();
         const text = normalizeText(draft);
         const current = networkRef.current;
-        if (!text || !current) return;
+        const name = normalizeName(displayName);
+        if (!text || !current || !name) {
+            if (!name) setIsEditingName(true);
+            return;
+        }
 
         const payload = {
             id: makeMessageId(),
+            name,
             text,
             sentAt: Date.now(),
         };
@@ -580,6 +609,7 @@ export function CommunicationPanel({ compact = false }: CommunicationPanelProps)
         addMessage({
             ...payload,
             senderId: current.clientId,
+            senderName: name,
             self: true,
         });
 
@@ -587,6 +617,7 @@ export function CommunicationPanel({ compact = false }: CommunicationPanelProps)
             new CustomEvent("naf-chat-bubble", {
                 detail: {
                     text,
+                    senderName: name,
                     nonce: payload.id,
                     durationMs: 5000,
                 },
@@ -603,6 +634,20 @@ export function CommunicationPanel({ compact = false }: CommunicationPanelProps)
         setDraft("");
     };
 
+    const submitName = (event: React.FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        const nextName = normalizeName(nameDraft);
+        if (!nextName) return;
+
+        setDisplayName(nextName);
+        setNameDraft(nextName);
+        setIsEditingName(false);
+
+        if (typeof window !== "undefined") {
+            window.localStorage.setItem(DISPLAY_NAME_STORAGE_KEY, nextName);
+        }
+    };
+
     const stopSceneKeys = (event: React.KeyboardEvent) => {
         event.stopPropagation();
     };
@@ -612,7 +657,12 @@ export function CommunicationPanel({ compact = false }: CommunicationPanelProps)
     };
 
     const connected = !!network;
-    const statusText = connected ? `Online ${shortId(network.clientId)}` : "Connecting...";
+    const hasDisplayName = !!normalizeName(displayName);
+    const statusText = connected
+        ? hasDisplayName
+            ? displayName
+            : `Online ${shortId(network.clientId)}`
+        : "Connecting...";
     const voiceText =
         voiceStatus === "starting"
             ? "Starting..."
@@ -621,26 +671,112 @@ export function CommunicationPanel({ compact = false }: CommunicationPanelProps)
             : "Join Voice";
 
     return (
-        <section
-            onPointerDown={stopScenePointer}
-            style={{
-                position: "fixed",
-                left: 16,
-                bottom: 16,
-                zIndex: 10050,
-                width: compact ? 280 : 340,
-                maxWidth: "calc(100vw - 32px)",
-                padding: 10,
-                borderRadius: 8,
-                background: "rgba(18, 18, 18, 0.78)",
-                color: "white",
-                fontFamily:
-                    '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                pointerEvents: "auto",
-                userSelect: "none",
-                boxShadow: "0 10px 30px rgba(0, 0, 0, 0.24)",
-            }}
-        >
+        <>
+            {isEditingName && (
+                <div
+                    onPointerDown={stopScenePointer}
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 10100,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                        background: "rgba(0, 0, 0, 0.38)",
+                        pointerEvents: "auto",
+                    }}
+                >
+                    <form
+                        onSubmit={submitName}
+                        style={{
+                            width: 320,
+                            maxWidth: "100%",
+                            borderRadius: 8,
+                            padding: 16,
+                            background: "rgba(18, 18, 18, 0.92)",
+                            color: "white",
+                            boxShadow: "0 16px 40px rgba(0, 0, 0, 0.3)",
+                            fontFamily:
+                                '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        }}
+                    >
+                        <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 8 }}>
+                            Enter your name
+                        </div>
+                        <div
+                            style={{
+                                fontSize: 12,
+                                lineHeight: 1.45,
+                                color: "rgba(255, 255, 255, 0.72)",
+                                marginBottom: 12,
+                            }}
+                        >
+                            This name will appear in chat and above your avatar.
+                        </div>
+                        <input
+                            value={nameDraft}
+                            onChange={(event) => setNameDraft(event.target.value)}
+                            onKeyDown={stopSceneKeys}
+                            onKeyUp={stopSceneKeys}
+                            autoFocus
+                            maxLength={24}
+                            placeholder="Your name"
+                            style={{
+                                width: "100%",
+                                boxSizing: "border-box",
+                                borderRadius: 8,
+                                border: "1px solid rgba(255, 255, 255, 0.22)",
+                                background: "rgba(255, 255, 255, 0.1)",
+                                color: "white",
+                                padding: "10px 11px",
+                                fontSize: 14,
+                                outline: "none",
+                                marginBottom: 12,
+                            }}
+                        />
+                        <button
+                            type="submit"
+                            disabled={!normalizeName(nameDraft)}
+                            style={{
+                                width: "100%",
+                                borderRadius: 8,
+                                border: "1px solid rgba(255, 255, 255, 0.18)",
+                                background: normalizeName(nameDraft)
+                                    ? "rgba(46, 160, 67, 0.95)"
+                                    : "rgba(255, 255, 255, 0.08)",
+                                color: "white",
+                                padding: "9px 12px",
+                                fontWeight: 800,
+                                cursor: normalizeName(nameDraft) ? "pointer" : "default",
+                            }}
+                        >
+                            Enter
+                        </button>
+                    </form>
+                </div>
+            )}
+
+            <section
+                onPointerDown={stopScenePointer}
+                style={{
+                    position: "fixed",
+                    right: 16,
+                    bottom: 88,
+                    zIndex: 10050,
+                    width: compact ? 280 : 340,
+                    maxWidth: "calc(100vw - 32px)",
+                    padding: 10,
+                    borderRadius: 8,
+                    background: "rgba(18, 18, 18, 0.78)",
+                    color: "white",
+                    fontFamily:
+                        '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                    pointerEvents: "auto",
+                    userSelect: "none",
+                    boxShadow: "0 10px 30px rgba(0, 0, 0, 0.24)",
+                }}
+            >
             <div
                 style={{
                     display: "flex",
@@ -651,15 +787,24 @@ export function CommunicationPanel({ compact = false }: CommunicationPanelProps)
                 }}
             >
                 <div style={{ fontWeight: 800, fontSize: 14 }}>Chat & Voice</div>
-                <div
+                <button
+                    type="button"
+                    onClick={() => {
+                        setNameDraft(displayName);
+                        setIsEditingName(true);
+                    }}
                     style={{
-                        fontSize: 11,
+                        border: 0,
+                        background: "transparent",
                         color: connected ? "#98f5b0" : "#ffd37a",
+                        fontSize: 11,
                         whiteSpace: "nowrap",
+                        cursor: "pointer",
+                        padding: 0,
                     }}
                 >
                     {statusText}
-                </div>
+                </button>
             </div>
 
             <div
@@ -692,7 +837,7 @@ export function CommunicationPanel({ compact = false }: CommunicationPanelProps)
                                     marginBottom: 2,
                                 }}
                             >
-                                {message.self ? "Me" : `User ${shortId(message.senderId)}`}
+                                {message.self ? `${message.senderName} (me)` : message.senderName}
                             </div>
                             <span
                                 style={{
@@ -744,12 +889,12 @@ export function CommunicationPanel({ compact = false }: CommunicationPanelProps)
                 />
                 <button
                     type="submit"
-                    disabled={!connected || !normalizeText(draft)}
+                    disabled={!connected || !hasDisplayName || !normalizeText(draft)}
                     style={{
                         borderRadius: 8,
                         border: "1px solid rgba(255, 255, 255, 0.18)",
                         background:
-                            connected && normalizeText(draft)
+                            connected && hasDisplayName && normalizeText(draft)
                                 ? "rgba(46, 160, 67, 0.9)"
                                 : "rgba(255, 255, 255, 0.08)",
                         color: "white",
@@ -766,7 +911,7 @@ export function CommunicationPanel({ compact = false }: CommunicationPanelProps)
                 <button
                     type="button"
                     onClick={voiceEnabled ? () => stopVoice(true) : startVoice}
-                    disabled={!connected || voiceStatus === "starting"}
+                    disabled={!connected || !hasDisplayName || voiceStatus === "starting"}
                     style={{
                         flex: 1,
                         borderRadius: 8,
@@ -814,6 +959,7 @@ export function CommunicationPanel({ compact = false }: CommunicationPanelProps)
             >
                 {voiceError || `Voice peers: ${voicePeerCount}`}
             </div>
-        </section>
+            </section>
+        </>
     );
 }

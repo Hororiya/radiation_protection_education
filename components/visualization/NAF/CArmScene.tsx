@@ -173,6 +173,7 @@ const CArmScene = () => {
 
     const handler = (evt: any) => {
       const text: string | undefined = evt?.detail?.text;
+      const senderName: string | undefined = evt?.detail?.senderName;
       const durationMs: number = evt?.detail?.durationMs ?? 5000;
       const senderId: string | undefined = evt?.detail?.senderId;
       const nonce: string = String(evt?.detail?.nonce || Date.now());
@@ -199,6 +200,7 @@ const CArmScene = () => {
         if (!targetEl?.setAttribute) return false;
         targetEl.setAttribute(CHAT_BUBBLE_COMPONENT, {
           text,
+          senderName: String(senderName || ""),
           hideAt: Date.now() + durationMs,
           nonce,
         });
@@ -472,6 +474,7 @@ const CArmScene = () => {
         AFRAME.registerComponent(CHAT_BUBBLE_COMPONENT, {
           schema: {
             text: { type: "string", default: "" },
+            senderName: { type: "string", default: "" },
             hideAt: { type: "number", default: 0 },
             nonce: { type: "string", default: "" },
           },
@@ -549,12 +552,14 @@ const CArmScene = () => {
             ctx.quadraticCurveTo(x, y, x + r, y);
             ctx.closePath();
           },
-          _renderBubbleTexture: function (text: string) {
+          _renderBubbleTexture: function (text: string, senderName: string) {
             if (!this._ctx || !this._plane) return false;
 
             const ctx = this._ctx as CanvasRenderingContext2D;
             const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+            const nameFontSize = 24;
             const fontSize = 36;
+            const nameLineHeight = senderName ? 32 : 0;
             const lineHeight = 48;
             const paddingX = 34;
             const paddingY = 26;
@@ -565,13 +570,19 @@ const CArmScene = () => {
 
             ctx.font = `700 ${fontSize}px ${fontFamily}`;
             const lines = this._wrapText(ctx, text, maxTextWidth);
+            ctx.font = `800 ${nameFontSize}px ${fontFamily}`;
+            const measuredNameWidth = senderName ? ctx.measureText(senderName).width : 0;
+            ctx.font = `700 ${fontSize}px ${fontFamily}`;
             const measuredWidth = Math.max(
               80,
+              measuredNameWidth,
               ...lines.map((line: string) => ctx.measureText(line).width)
             );
 
             const logicalWidth = Math.ceil(Math.min(maxTextWidth, measuredWidth) + paddingX * 2);
-            const logicalHeight = Math.ceil(lines.length * lineHeight + paddingY * 2 + tailHeight);
+            const logicalHeight = Math.ceil(
+              nameLineHeight + lines.length * lineHeight + paddingY * 2 + tailHeight
+            );
             const rectHeight = logicalHeight - tailHeight;
 
             this._canvas.width = Math.ceil(logicalWidth * dpr);
@@ -605,13 +616,25 @@ const CArmScene = () => {
             this._drawRoundedRect(ctx, 4, 4, logicalWidth - 8, rectHeight - 8, 30);
             ctx.stroke();
 
+            let textStartY = paddingY;
+            if (senderName) {
+              ctx.font = `800 ${nameFontSize}px ${fontFamily}`;
+              ctx.fillStyle = "#2f6f9f";
+              ctx.fillText(senderName, logicalWidth / 2, paddingY + nameFontSize / 2);
+              textStartY += nameLineHeight;
+            }
+
+            ctx.font = `700 ${fontSize}px ${fontFamily}`;
             ctx.fillStyle = "#111111";
             lines.forEach((line: string, index: number) => {
               const y =
-                paddingY +
+                textStartY +
                 lineHeight / 2 +
                 index * lineHeight +
-                Math.max(0, (rectHeight - paddingY * 2 - lines.length * lineHeight) / 2);
+                Math.max(
+                  0,
+                  (rectHeight - paddingY * 2 - nameLineHeight - lines.length * lineHeight) / 2
+                );
               ctx.fillText(line, logicalWidth / 2, y);
             });
 
@@ -645,14 +668,15 @@ const CArmScene = () => {
             if (!this._ensureParts()) return;
 
             const text = this._formatText(this.data.text);
+            const senderName = this._formatText(this.data.senderName).slice(0, 24);
             const show = !!text && Date.now() < (this.data.hideAt || 0);
             this._bubble.setAttribute("visible", show);
             if (!show) return;
 
-            const renderKey = `${this.data.nonce || ""}|${text}`;
+            const renderKey = `${this.data.nonce || ""}|${senderName}|${text}`;
             if (this._dirty || renderKey !== this._lastRenderKey || !this._material) {
               this._lastText = text;
-              if (this._renderBubbleTexture(text)) {
+              if (this._renderBubbleTexture(text, senderName)) {
                 this._lastRenderKey = renderKey;
                 this._dirty = false;
               }
@@ -1264,7 +1288,7 @@ const CArmScene = () => {
                 rotation="0 0 0"
                 wasd-controls="fly: false; acceleration: 4"
                 naf-emote="src: #emote-check; hideAt: 0"
-                naf-chat-bubble="text: ; hideAt: 0"
+                naf-chat-bubble="text: ; senderName: ; hideAt: 0"
                 visible={objectVisibles.player}
             >
                  {/* Camera handles view pitch (and temporary yaw, transferred to rig) */}
