@@ -13,15 +13,18 @@ export function DoseEquipmentsUI({ ...props }) {
     // Variable, State
     // --------------------------------------------------
     // useStore
-    const [set] = useStore((state) => [state.set]);
+    const [set, equipments] = useStore((state) => [
+        state.set,
+        state.sceneStates.playerState.equipments,
+    ]);
 
     // --------------------------------------------------
-    // Control Panel
+    // Control Panel (value from store so UI and avatar stay in sync)
     const [,] = useControls(() => ({
         Player: folder({
             Equipments: folder({
                 Goggle: {
-                    value: false,
+                    value: equipments.goggle,
                     onChange: (e) => {
                         set((state) => ({
                             sceneStates: {
@@ -56,7 +59,7 @@ export function DoseEquipmentsUI({ ...props }) {
                     },
                 },
                 NeckGuard: {
-                    value: false,
+                    value: equipments.neck,
                     label: "Neck Guard",
                     onChange: (e) => {
                         set((state) => ({
@@ -92,7 +95,7 @@ export function DoseEquipmentsUI({ ...props }) {
                     },
                 },
                 Apron: {
-                    value: false,
+                    value: equipments.apron,
                     onChange: (e) => {
                         set((state) => ({
                             sceneStates: {
@@ -127,7 +130,7 @@ export function DoseEquipmentsUI({ ...props }) {
                     },
                 },
                 Glove: {
-                    value: false,
+                    value: equipments.glove,
                     onChange: (e) => {
                         set((state) => ({
                             sceneStates: {

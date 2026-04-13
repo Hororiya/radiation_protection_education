@@ -313,65 +313,69 @@ export function ScreenUIDosimeter3({ isEnglish = false }: TipsBaseProps) {
                         <p>アイコンの種類は以下の表の通りになっています。</p>
                         <p>また，防護具は3Dモデルにも反映されます。</p>
                         <table>
-                            <tr>
-                                <th>種類</th>
-                                <th>アイコン</th>
-                            </tr>
-                            <tr>
-                                <td>防護板</td>
-                                <td align={"center"}>
-                                    <HealthAndSafety
-                                        sx={{
-                                            color: color,
-                                            fontSize: fontSize,
-                                        }}
-                                    />
-                                </td>
-                            </tr>
-                            <tr>
-                                <td>ゴーグル</td>
-                                <td align={"center"}>
-                                    <Visibility
-                                        sx={{
-                                            color: color,
-                                            fontSize: fontSize,
-                                        }}
-                                    />
-                                </td>
-                            </tr>
-                            <tr>
-                                <td>ネックガード</td>
-                                <td align={"center"}>
-                                    <PersonAddAlt1
-                                        sx={{
-                                            color: color,
-                                            fontSize: fontSize,
-                                        }}
-                                    />
-                                </td>
-                            </tr>
-                            <tr>
-                                <td>エプロン</td>
-                                <td align={"center"}>
-                                    <Person
-                                        sx={{
-                                            color: color,
-                                            fontSize: fontSize,
-                                        }}
-                                    />
-                                </td>
-                            </tr>
-                            <tr>
-                                <td>手袋</td>
-                                <td align={"center"}>
-                                    <SignLanguage
-                                        sx={{
-                                            color: color,
-                                            fontSize: fontSize,
-                                        }}
-                                    />
-                                </td>
-                            </tr>
+                            <thead>
+                                <tr>
+                                    <th>種類</th>
+                                    <th>アイコン</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>防護板</td>
+                                    <td align={"center"}>
+                                        <HealthAndSafety
+                                            sx={{
+                                                color: color,
+                                                fontSize: fontSize,
+                                            }}
+                                        />
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>ゴーグル</td>
+                                    <td align={"center"}>
+                                        <Visibility
+                                            sx={{
+                                                color: color,
+                                                fontSize: fontSize,
+                                            }}
+                                        />
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>ネックガード</td>
+                                    <td align={"center"}>
+                                        <PersonAddAlt1
+                                            sx={{
+                                                color: color,
+                                                fontSize: fontSize,
+                                            }}
+                                        />
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>エプロン</td>
+                                    <td align={"center"}>
+                                        <Person
+                                            sx={{
+                                                color: color,
+                                                fontSize: fontSize,
+                                            }}
+                                        />
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>手袋</td>
+                                    <td align={"center"}>
+                                        <SignLanguage
+                                            sx={{
+                                                color: color,
+                                                fontSize: fontSize,
+                                            }}
+                                        />
+                                    </td>
+                                </tr>
+                            </tbody>
                         </table>
                     </>
                 ) : (
@@ -382,65 +386,69 @@ export function ScreenUIDosimeter3({ isEnglish = false }: TipsBaseProps) {
                             model.
                         </p>
                         <table>
-                            <tr>
-                                <th>Category</th>
-                                <th>Icon</th>
-                            </tr>
-                            <tr>
-                                <td>Shield</td>
-                                <td align={"center"}>
-                                    <HealthAndSafety
-                                        sx={{
-                                            color: color,
-                                            fontSize: fontSize,
-                                        }}
-                                    />
-                                </td>
-                            </tr>
-                            <tr>
-                                <td>Goggle</td>
-                                <td align={"center"}>
-                                    <Visibility
-                                        sx={{
-                                            color: color,
-                                            fontSize: fontSize,
-                                        }}
-                                    />
-                                </td>
-                            </tr>
-                            <tr>
-                                <td>Neck Guard</td>
-                                <td align={"center"}>
-                                    <PersonAddAlt1
-                                        sx={{
-                                            color: color,
-                                            fontSize: fontSize,
-                                        }}
-                                    />
-                                </td>
-                            </tr>
-                            <tr>
-                                <td>Apron</td>
-                                <td align={"center"}>
-                                    <Person
-                                        sx={{
-                                            color: color,
-                                            fontSize: fontSize,
-                                        }}
-                                    />
-                                </td>
-                            </tr>
-                            <tr>
-                                <td>Glove</td>
-                                <td align={"center"}>
-                                    <SignLanguage
-                                        sx={{
-                                            color: color,
-                                            fontSize: fontSize,
-                                        }}
-                                    />
-                                </td>
-                            </tr>
+                            <thead>
+                                <tr>
+                                    <th>Category</th>
+                                    <th>Icon</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>Shield</td>
+                                    <td align={"center"}>
+                                        <HealthAndSafety
+                                            sx={{
+                                                color: color,
+                                                fontSize: fontSize,
+                                            }}
+                                        />
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>Goggle</td>
+                                    <td align={"center"}>
+                                        <Visibility
+                                            sx={{
+                                                color: color,
+                                                fontSize: fontSize,
+                                            }}
+                                        />
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>Neck Guard</td>
+                                    <td align={"center"}>
+                                        <PersonAddAlt1
+                                            sx={{
+                                                color: color,
+                                                fontSize: fontSize,
+                                            }}
+                                        />
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>Apron</td>
+                                    <td align={"center"}>
+                                        <Person
+                                            sx={{
+                                                color: color,
+                                                fontSize: fontSize,
+                                            }}
+                                        />
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>Glove</td>
+                                    <td align={"center"}>
+                                        <SignLanguage
+                                            sx={{
+                                                color: color,
+                                                fontSize: fontSize,
+                                            }}
+                                        />
+                                    </td>
+                                </tr>
+                            </tbody>
                         </table>
                     </>
                 )}

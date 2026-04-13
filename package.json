@@ -4,7 +4,8 @@
     "private": true,
     "homepage": "https://ireansan.github.io/radiation_protection_education/",
     "scripts": {
-        "dev": "NODE_OPTIONS='--inspect' next dev",
+        "dev": "next dev",
+        "dev:naf": "node server.js",
         "build": "next build && next export",
         "start": "next start",
         "lint": "next lint"

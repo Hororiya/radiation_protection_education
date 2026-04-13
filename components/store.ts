@@ -62,10 +62,10 @@ export const playerConfig = {
 };
 
 const equipments = {
-    goggle: false,
-    neck: false,
-    apron: false,
-    glove: false,
+    goggle: true,
+    neck: true,
+    apron: true,
+    glove: true,
 };
 export type Equipments = typeof equipments;
 

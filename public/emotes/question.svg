@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <circle cx="64" cy="64" r="56" fill="#fff9db" stroke="#9a7b00" stroke-width="6"/>
+  <!-- Inverted question mark: rotate the mark 180° around center -->
+  <g transform="rotate(180 64 64)">
+    <path d="M52 50c0-10 8-18 18-18s18 8 18 18c0 7-4 13-10 16-4 2-6 5-6 10v2" fill="none" stroke="#b58900" stroke-width="10" stroke-linecap="round"/>
+    <circle cx="64" cy="92" r="6" fill="#b58900"/>
+  </g>
+</svg>
+

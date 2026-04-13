@@ -33,6 +33,16 @@ export function DoseAnimationControlsWithAudioUI({
     }, [customSpeed]);
 
     const isPlayRef = React.useRef<boolean>(true);
+    const safePlay = React.useCallback(async () => {
+        const el = audioRef.current;
+        if (!el) return;
+        try {
+            // Muted autoplay is allowed in most browsers, but still can fail in dev/strict mode.
+            await el.play();
+        } catch {
+            // ignore autoplay restrictions / transient failures
+        }
+    }, [audioRef]);
 
     const animationStore = useCreateStore();
     const [animation, setAnimation] = useControls(
@@ -45,7 +55,7 @@ export function DoseAnimationControlsWithAudioUI({
                     }
 
                     if (e) {
-                        audioRef.current.play();
+                        safePlay();
                     } else {
                         audioRef.current.pause();
                     }
@@ -77,7 +87,7 @@ export function DoseAnimationControlsWithAudioUI({
                 },
                 onEditEnd: () => {
                     if (isPlayRef.current) {
-                        audioRef.current ? audioRef.current.play() : null;
+                        safePlay();
                     }
                 },
             },
@@ -96,9 +106,12 @@ export function DoseAnimationControlsWithAudioUI({
     };
 
     React.useEffect(() => {
-        setInterval(() => {
+        const id = window.setInterval(() => {
             updateElapsed();
         }, 100);
+        return () => {
+            window.clearInterval(id);
+        };
     }, []);
 
     React.useEffect(() => {
@@ -115,8 +128,9 @@ export function DoseAnimationControlsWithAudioUI({
     }, [audioRef]);
 
     React.useEffect(() => {
-        audioRef.current ? audioRef.current.play() : null;
-    }, [isTimeLapse]);
+        // Don't throw if autoplay is blocked
+        safePlay();
+    }, [isTimeLapse, safePlay]);
 
     return (
         <div

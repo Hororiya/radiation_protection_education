@@ -73,3 +73,6 @@ docs/Notes/*
 
 # Blender
 /public/models/blend/*
+
+# Examples
+/examples/*
