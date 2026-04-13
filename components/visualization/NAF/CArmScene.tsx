@@ -30,7 +30,8 @@ const rot3 = (v: number[]) => `${deg(v[0])} ${deg(v[1])} ${deg(v[2])}`;
 
 const AVATAR_TEMPLATE_ID = "avatar-template-selfmade";
 const PLAYER_CAMERA_ID = "player-camera";
-const YAW_RIG_COMPONENT = "yaw-rig-from-look-controls";
+const PLAYER_LOOK_COMPONENT = "stable-player-look-controls";
+const CAMERA_DITHER_FADE_COMPONENT = "camera-distance-dither-fade";
 const GROUND_ALIGN_COMPONENT = "ground-align-once";
 const PLAYER_EQUIPMENTS_COMPONENT = "player-equipments";
 const CHAT_BUBBLE_COMPONENT = "naf-chat-bubble";
@@ -120,7 +121,7 @@ const CArmScene = () => {
   const volumeColormapUrl = applyBasePath("/textures/colormap/cm_viridis.png");
   const showVolumeEntity = true;
   // dose 体渲染变换：NAF 中手动摆放正确后的值（与 C-Arm 页视觉一致）
-  const volumePosition: [number, number, number] = [-1.7, 2.5, 1.95];
+  const volumePosition: [number, number, number] = [-1.7, 2.5, 1.9];
   const volumeRotationDeg: [number, number, number] = [180, -90, 90]; // A-Frame 用度
   const volumeScale = 0.053;
   // 与原始 C-Arm 页一致：Machine & Patient 无父级变换，世界坐标；相机高度 1.6
@@ -305,64 +306,105 @@ const CArmScene = () => {
 
     registerCArmVolumeComponent();
 
-    // Register an A-Frame component that transfers yaw from camera look-controls
-    // to the player entity, so avatar only rotates around Y axis.
-    // This keeps camera pitch local (not applied to the avatar / networked rotation).
+    // Stable first-person look control: yaw lives on the networked player rig,
+    // pitch lives on the camera. This avoids mutating A-Frame look-controls internals.
     if (typeof window !== "undefined") {
       const w = window as any;
       const AFRAME = w.AFRAME;
-      if (AFRAME?.registerComponent && !AFRAME.components?.[YAW_RIG_COMPONENT]) {
-        AFRAME.registerComponent(YAW_RIG_COMPONENT, {
+      if (AFRAME?.registerComponent && !AFRAME.components?.[PLAYER_LOOK_COMPONENT]) {
+        AFRAME.registerComponent(PLAYER_LOOK_COMPONENT, {
           schema: {
             camera: { type: "selector" },
+            sensitivity: { type: "number", default: 0.002 },
+            minPitch: { type: "number", default: -85 },
+            maxPitch: { type: "number", default: 85 },
+            pointerLock: { type: "boolean", default: true },
+            maxDelta: { type: "number", default: 120 },
+            settleFrames: { type: "number", default: 3 },
           },
           init: function () {
             this._yaw = this.el?.object3D?.rotation?.y || 0;
-            this._lastAppliedYaw = this._yaw;
-            this._hasAppliedYaw = false;
+            this._pitch = this.data.camera?.object3D?.rotation?.x || 0;
+            this._canvas = null;
+            this._pointerLocked = false;
+            this._ignoreMouseMoves = 0;
+            this._onCanvasClick = this._onCanvasClick.bind(this);
+            this._onPointerLockChange = this._onPointerLockChange.bind(this);
+            this._onMouseMove = this._onMouseMove.bind(this);
+            this._ensureCanvas = this._ensureCanvas.bind(this);
+            this._applyLook(true);
+            this._ensureCanvas();
+            this.el.sceneEl?.addEventListener("render-target-loaded", this._ensureCanvas);
+            document.addEventListener("mousemove", this._onMouseMove, false);
+            document.addEventListener("pointerlockchange", this._onPointerLockChange, false);
           },
-          _applyYaw: function (yaw: number, force?: boolean) {
-            const delta = yaw - this._lastAppliedYaw;
-            if (!force && this._hasAppliedYaw && Math.abs(delta) < 0.000001) return;
-
-            this._yaw = yaw;
-            this._lastAppliedYaw = yaw;
-            this._hasAppliedYaw = true;
-
-            if (this.el?.object3D?.rotation) {
-              this.el.object3D.rotation.set(0, yaw, 0);
+          _ensureCanvas: function () {
+            const canvas = this.el.sceneEl?.canvas;
+            if (!canvas || this._canvas === canvas) return;
+            if (this._canvas) {
+              this._canvas.removeEventListener("click", this._onCanvasClick);
+            }
+            this._canvas = canvas;
+            canvas.addEventListener("click", this._onCanvasClick);
+          },
+          _onCanvasClick: function () {
+            if (!this.data.pointerLock || !this._canvas?.requestPointerLock) return;
+            if (document.pointerLockElement !== this._canvas) {
+              this._canvas.requestPointerLock();
+            }
+          },
+          _onPointerLockChange: function () {
+            const locked = document.pointerLockElement === this._canvas;
+            this._pointerLocked = locked;
+            this._ignoreMouseMoves = locked ? Math.max(0, this.data.settleFrames || 0) : 0;
+            this._yaw = this.el?.object3D?.rotation?.y || this._yaw || 0;
+            this._pitch = this.data.camera?.object3D?.rotation?.x || this._pitch || 0;
+          },
+          _onMouseMove: function (event: MouseEvent) {
+            if (!this._pointerLocked || document.pointerLockElement !== this._canvas) return;
+            if (!this.data.camera?.object3D || !this.el?.object3D) return;
+            if (this._ignoreMouseMoves > 0) {
+              this._ignoreMouseMoves -= 1;
+              return;
             }
 
+            const sensitivity = this.data.sensitivity || 0.002;
+            const minPitch = (this.data.minPitch * Math.PI) / 180;
+            const maxPitch = (this.data.maxPitch * Math.PI) / 180;
+            const maxDelta = Math.max(1, this.data.maxDelta || 120);
+            const movementX = event.movementX || 0;
+            const movementY = event.movementY || 0;
+
+            if (Math.abs(movementX) > maxDelta || Math.abs(movementY) > maxDelta) {
+              return;
+            }
+
+            this._yaw -= movementX * sensitivity;
+            this._pitch -= movementY * sensitivity;
+            this._pitch = Math.max(minPitch, Math.min(maxPitch, this._pitch));
+            this._applyLook(false);
+          },
+          _applyLook: function (force: boolean) {
+            if (!force && !this.el?.object3D) return;
+
+            this.el.object3D.rotation.set(0, this._yaw, 0);
             this.el.setAttribute("rotation", {
               x: 0,
-              y: (yaw * 180) / Math.PI,
+              y: (this._yaw * 180) / Math.PI,
               z: 0,
             });
+
+            const camEl = this.data.camera;
+            if (camEl?.object3D) {
+              camEl.object3D.rotation.set(this._pitch, 0, 0);
+            }
           },
-          tick: function () {
-            const camEl = this.data && this.data.camera;
-            if (!camEl) return;
-
-            const lc = camEl.components && camEl.components["look-controls"];
-            // Prefer internal yawObject if available (split yaw/pitch)
-            const yawObj = lc && lc.yawObject;
-            if (!yawObj) {
-              // Fallback: just clamp to yaw from camera rotation
-              const y = camEl.object3D?.rotation?.y || 0;
-              this._applyYaw(y);
-              return;
-            }
-
-            // Transfer delta yaw from camera to rig, then zero out camera yaw
-            const deltaYaw = yawObj.rotation.y || 0;
-            if (Math.abs(deltaYaw) > 0.000001) {
-              yawObj.rotation.y = 0;
-              this._applyYaw(this._yaw + deltaYaw);
-              return;
-            }
-
-            if (!this._hasAppliedYaw) {
-              this._applyYaw(this._yaw, true);
+          remove: function () {
+            this.el.sceneEl?.removeEventListener("render-target-loaded", this._ensureCanvas);
+            document.removeEventListener("mousemove", this._onMouseMove, false);
+            document.removeEventListener("pointerlockchange", this._onPointerLockChange, false);
+            if (this._canvas) {
+              this._canvas.removeEventListener("click", this._onCanvasClick);
             }
           },
         });
@@ -414,6 +456,113 @@ const CArmScene = () => {
           tick: function () {
             // Re-apply when _meshes get populated after model loads (setAttribute may run before model-loaded)
             this._applyVisibility();
+          },
+        });
+      }
+    }
+
+    // Dither-fade avatar mesh close to the local camera so first-person animations
+    // do not flash the player's own body across the view.
+    if (typeof window !== "undefined") {
+      const w = window as any;
+      const AFRAME = w.AFRAME;
+      if (AFRAME?.registerComponent && !AFRAME.components?.[CAMERA_DITHER_FADE_COMPONENT]) {
+        AFRAME.registerComponent(CAMERA_DITHER_FADE_COMPONENT, {
+          schema: {
+            camera: { type: "selector" },
+            near: { type: "number", default: 0.35 },
+            far: { type: "number", default: 0.8 },
+          },
+          init: function () {
+            this._patchedMaterials = [];
+            this._onModelLoaded = this._onModelLoaded.bind(this);
+            this.el.addEventListener("model-loaded", this._onModelLoaded);
+            this._patchModel();
+          },
+          update: function () {
+            this._updateUniforms();
+          },
+          _onModelLoaded: function () {
+            this._patchModel();
+          },
+          _patchModel: function () {
+            const root = this.el.object3D;
+            if (!root) return;
+
+            this._patchedMaterials = [];
+            root.traverse((child: any) => {
+              if (!child?.isMesh || !child.material) return;
+
+              const materials = Array.isArray(child.material)
+                ? child.material
+                : [child.material];
+              const patched = materials.map((material: any) =>
+                this._patchMaterial(material.clone ? material.clone() : material)
+              );
+              child.material = Array.isArray(child.material) ? patched : patched[0];
+              child.frustumCulled = false;
+            });
+          },
+          _patchMaterial: function (material: any) {
+            if (!material || material.userData?.cameraDistanceDitherFade) return material;
+
+            material.userData = material.userData || {};
+            material.userData.cameraDistanceDitherFade = true;
+            material.dithering = true;
+            material.alphaToCoverage = true;
+            material.transparent = false;
+            material.depthWrite = true;
+            material.onBeforeCompile = (shader: any) => {
+              shader.uniforms.uCameraFadeNear = { value: this.data.near };
+              shader.uniforms.uCameraFadeFar = { value: this.data.far };
+              material.userData.cameraDistanceDitherFadeUniforms = shader.uniforms;
+
+              shader.vertexShader = shader.vertexShader
+                .replace(
+                  "#include <common>",
+                  `#include <common>
+varying float vCameraFadeDistance;`
+                )
+                .replace(
+                  "#include <project_vertex>",
+                  `#include <project_vertex>
+vCameraFadeDistance = length(mvPosition.xyz);`
+                );
+
+              shader.fragmentShader = shader.fragmentShader
+                .replace(
+                  "#include <common>",
+                  `#include <common>
+uniform float uCameraFadeNear;
+uniform float uCameraFadeFar;
+varying float vCameraFadeDistance;
+float cameraFadeDither(vec2 p){
+  return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+}`
+                )
+                .replace(
+                  "#include <alphatest_fragment>",
+                  `#include <alphatest_fragment>
+float cameraFade = smoothstep(uCameraFadeNear, uCameraFadeFar, vCameraFadeDistance);
+if (cameraFade <= 0.001) discard;
+if (cameraFadeDither(gl_FragCoord.xy) > cameraFade) discard;`
+                );
+            };
+            material.customProgramCacheKey = () => CAMERA_DITHER_FADE_COMPONENT;
+            material.needsUpdate = true;
+            this._patchedMaterials.push(material);
+            return material;
+          },
+          _updateUniforms: function () {
+            for (let i = 0; i < this._patchedMaterials.length; i++) {
+              const uniforms = this._patchedMaterials[i]?.userData?.cameraDistanceDitherFadeUniforms;
+              if (!uniforms) continue;
+              uniforms.uCameraFadeNear.value = this.data.near;
+              uniforms.uCameraFadeFar.value = this.data.far;
+            }
+          },
+          remove: function () {
+            this.el.removeEventListener("model-loaded", this._onModelLoaded);
           },
         });
       }
@@ -1189,10 +1338,12 @@ const CArmScene = () => {
               <!-- Render the same GLB as SelfMadePlayer (three.js scene) -->
               <!-- Player root is at eye-level (y=1.6), so offset model down to ground -->
               <a-entity
+                class="avatar-model"
                 gltf-model="#player-model"
                 position="0 0 0"
                 rotation="0 180 0"
                 scale="1 1 1"
+                ${CAMERA_DITHER_FADE_COMPONENT}="camera: #${PLAYER_CAMERA_ID}; near: 0.25; far: 0.8"
               ></a-entity>
             </a-entity>
           `,
@@ -1283,7 +1434,7 @@ const CArmScene = () => {
                 id="player"
                 ref={playerRigRef}
                 networked={`template:#${AVATAR_TEMPLATE_ID};attachTemplateToLocal:true;`}
-                {...({ [YAW_RIG_COMPONENT]: `camera: #${PLAYER_CAMERA_ID}` } as any)}
+                {...({ [PLAYER_LOOK_COMPONENT]: `camera: #${PLAYER_CAMERA_ID}` } as any)}
                 position={startPos}
                 rotation="0 0 0"
                 wasd-controls="fly: false; acceleration: 4"
@@ -1291,13 +1442,12 @@ const CArmScene = () => {
                 naf-chat-bubble="text: ; senderName: ; hideAt: 0"
                 visible={objectVisibles.player}
             >
-                 {/* Camera handles view pitch (and temporary yaw, transferred to rig) */}
-                 <a-camera 
+                 {/* Camera pitch is controlled by stable-player-look-controls; yaw lives on #player. */}
+                 <a-entity
                     id={PLAYER_CAMERA_ID}
+                    camera="active: true"
                     position={`0 ${cameraEyeHeight} 0`}
-                    look-controls="pointerLockEnabled: true"
-                    wasd-controls-enabled="false"
-                 ></a-camera>
+                 ></a-entity>
             </a-entity>
             
             {/* Volume entity: 使用 NAF 中手动摆放正确后的 dose 变换 */}
