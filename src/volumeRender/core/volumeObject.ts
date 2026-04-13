@@ -79,6 +79,7 @@ class VolumeObject extends VolumeBase {
         this._clippingPlanesIsBoard = [];
 
         this.isMesh = true;
+        this.frustumCulled = false;
 
         // Texture
         const texture = new THREE.Data3DTexture(

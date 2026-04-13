@@ -34,6 +34,8 @@ export function registerCArmVolumeComponent(): void {
     init: function () {
       this._mesh = null as any;
       this._material = null as any;
+      this._depthTarget = null as any;
+      this._depthSize = null as any;
       const url = this.data.nrrdUrl;
       if (!url) {
         console.warn("[c-arm-volume] nrrdUrl is empty");
@@ -79,6 +81,9 @@ export function registerCArmVolumeComponent(): void {
       texture.format = THREE.RedFormat;
       texture.type = THREE.FloatType;
       texture.minFilter = texture.magFilter = THREE.LinearFilter;
+      texture.wrapS = THREE.ClampToEdgeWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.wrapR = THREE.ClampToEdgeWrapping;
       texture.unpackAlignment = 1;
       texture.needsUpdate = true;
 
@@ -91,10 +96,18 @@ export function registerCArmVolumeComponent(): void {
         u_boardCoefficient: { value: 0.01 },
         u_boardOffset: { value: 0.0 },
         u_opacity: { value: 0.75 }, // 半透明，可透过体渲染看到 C-Arm/病床
+        u_samplingRate: { value: 1.25 },
+        u_hasSceneDepth: { value: false },
+        u_depthEpsilon: { value: 0.2 },
         u_clim: { value: new THREE.Vector2(0, clim2) },
         u_data: { value: texture },
         u_cmdata: { value: null as any },
+        u_sceneDepth: { value: null as any },
+        u_depthTexSize: { value: new THREE.Vector2(1, 1) },
         u_modelMatrix: { value: new THREE.Matrix4() },
+        u_modelMatrixInverse: { value: new THREE.Matrix4() },
+        u_projectionMatrixInverse: { value: new THREE.Matrix4() },
+        u_viewMatrixInverse: { value: new THREE.Matrix4() },
       };
 
       const material = new THREE.RawShaderMaterial({
@@ -105,7 +118,7 @@ export function registerCArmVolumeComponent(): void {
         side: THREE.BackSide,
         transparent: true,
         depthTest: false,
-        depthWrite: true,
+        depthWrite: false,
       });
       this._material = material;
 
@@ -113,6 +126,7 @@ export function registerCArmVolumeComponent(): void {
       geometry.translate(w / 2 - 0.5, h / 2 - 0.5, d / 2 - 0.5);
 
       const mesh = new THREE.Mesh(geometry, material);
+      mesh.frustumCulled = false;
       mesh.renderOrder = 10; // 体渲染在 C-Arm/病床之后绘制，便于透明混合
       this.el.object3D.add(mesh);
       this._mesh = mesh;
@@ -153,12 +167,98 @@ export function registerCArmVolumeComponent(): void {
       }
     },
 
+    _ensureDepthTarget: function (THREE: any, renderer: any) {
+      if (!renderer) return null;
+
+      const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+      const width = Math.max(1, Math.floor(size.x));
+      const height = Math.max(1, Math.floor(size.y));
+
+      if (
+        this._depthTarget &&
+        this._depthSize &&
+        this._depthSize.x === width &&
+        this._depthSize.y === height
+      ) {
+        return this._depthTarget;
+      }
+
+      if (this._depthTarget) {
+        this._depthTarget.dispose();
+        this._depthTarget.depthTexture?.dispose?.();
+      }
+
+      const depthTexture = new THREE.DepthTexture(width, height);
+      depthTexture.type = THREE.UnsignedIntType;
+      depthTexture.minFilter = THREE.NearestFilter;
+      depthTexture.magFilter = THREE.NearestFilter;
+      depthTexture.format = THREE.DepthFormat;
+
+      const target = new THREE.WebGLRenderTarget(width, height, {
+        minFilter: THREE.NearestFilter,
+        magFilter: THREE.NearestFilter,
+        format: THREE.RGBAFormat,
+        depthBuffer: true,
+        stencilBuffer: false,
+      });
+      target.depthTexture = depthTexture;
+
+      this._depthTarget = target;
+      this._depthSize = new THREE.Vector2(width, height);
+      return target;
+    },
+
+    _renderSceneDepth: function () {
+      const mesh = this._mesh;
+      const mat = this._material;
+      const sceneEl = this.el.sceneEl;
+      const renderer = sceneEl?.renderer;
+      const scene = sceneEl?.object3D;
+      const camera = sceneEl?.camera;
+      const THREE = (window as any).AFRAME?.THREE;
+      if (!mesh || !mat || !renderer || !scene || !camera || !THREE) return;
+
+      const target = this._ensureDepthTarget(THREE, renderer);
+      if (!target) return;
+
+      const previousTarget = renderer.getRenderTarget();
+      const previousAutoClear = renderer.autoClear;
+      const previousXrEnabled = renderer.xr ? renderer.xr.enabled : undefined;
+      const previousVisible = mesh.visible;
+
+      mesh.visible = false;
+      renderer.autoClear = true;
+      if (renderer.xr) renderer.xr.enabled = false;
+
+      renderer.setRenderTarget(target);
+      renderer.clear(true, true, true);
+      renderer.render(scene, camera);
+
+      renderer.setRenderTarget(previousTarget);
+      renderer.autoClear = previousAutoClear;
+      if (renderer.xr && previousXrEnabled !== undefined) renderer.xr.enabled = previousXrEnabled;
+      mesh.visible = previousVisible;
+
+      mat.uniforms.u_sceneDepth.value = target.depthTexture;
+      mat.uniforms.u_depthTexSize.value.copy(this._depthSize);
+      mat.uniforms.u_hasSceneDepth.value = true;
+    },
+
     tick: function () {
       const mesh = this._mesh;
       const mat = this._material;
       if (!mesh?.material?.uniforms?.u_modelMatrix) return;
       mesh.updateMatrixWorld(true);
       mat.uniforms.u_modelMatrix.value.copy(mesh.matrixWorld);
+      mat.uniforms.u_modelMatrixInverse.value.copy(mesh.matrixWorld).invert();
+
+      const camera = this.el.sceneEl?.camera;
+      if (camera) {
+        mat.uniforms.u_projectionMatrixInverse.value.copy(camera.projectionMatrixInverse);
+        mat.uniforms.u_viewMatrixInverse.value.copy(camera.matrixWorld);
+      }
+
+      this._renderSceneDepth();
     },
 
     remove: function () {
@@ -171,6 +271,12 @@ export function registerCArmVolumeComponent(): void {
         }
         this._mesh = null;
         this._material = null;
+      }
+      if (this._depthTarget) {
+        this._depthTarget.dispose();
+        this._depthTarget.depthTexture?.dispose?.();
+        this._depthTarget = null;
+        this._depthSize = null;
       }
     },
   });
